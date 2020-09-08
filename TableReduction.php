@@ -31,7 +31,6 @@ class TableReduction{
     }
 
     public function generateCacheTable( bool $force = false )  : void{
-        $start = time();
         $secondsFromGeneration = $this->getLastGenerationTS();
         if( $secondsFromGeneration < 0 || $secondsFromGeneration > $this->TTL || $force ){
 
@@ -45,19 +44,26 @@ class TableReduction{
             $drop = "DROP TABLE IF EXISTS {$temp}";
             $this->db->query( $drop );
             $create = <<<EOD
-CREATE TABLE {$temp}
+CREATE TABLE %s
 ENGINE=InnoDB DEFAULT CHARSET=utf8
 AS SELECT
-    {$this->select}
+    %s
 FROM
-    {$this->sourceTable}
+    %s
+/* Where */
+%s
+/* Group By */
+%s
 EOD;
+            $sqlWhere = "";
             if( ! empty( $this->where ) ){
-                $create .= " WHERE {$this->where} ";
+                $sqlWhere = " WHERE {$this->where} ";
             }
+            $sqlGroupBy = "";
             if( ! empty( $this->groupBy ) ){
-                $create .= " GROUP BY {$this->groupBy} ";
+                $sqlGroupBy = " GROUP BY {$this->groupBy} ";
             }
+            $create = sprintf( $create , $temp , $this->select , $this->sourceTable , $sqlWhere , $sqlGroupBy );
             $this->db->query( $create );
 
             $rename = "RENAME TABLE $neu TO $old , $temp To $neu;";
@@ -66,8 +72,6 @@ EOD;
             $dropold = "DROP TABLE {$old}";
             $this->db->query( $dropold );
         }
-        $end = time();
-        echo "Execution time: " . ( $end - $start ) . " seconds\n\n";
     }
 
     private function getLastGenerationTS() : int{

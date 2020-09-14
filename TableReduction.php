@@ -3,34 +3,40 @@
 
 class TableReduction{
 
-    private string $sourceTable;
-    private string $destinationTable;
-    private string $select;
-    private string $where;
-    private string $groupBy;
-    /* https://github.com/dublinbranch/phpMysql */
-    private DBWrapper $db;
-    private int $TTL;
+    private array $attributes = array(
+        'sourceTable' =>        array( 'required' => true  , 'removeBackTick' => true  , 'value' => "" ) ,
+        'destinationTable' =>   array( 'required' => true  , 'removeBackTick' => true  , 'value' => "" ) ,
+        /* https://github.com/dublinbranch/phpMysql */
+        'db' =>                 array( 'required' => true  , 'removeBackTick' => false , 'value' => "" ) ,
+        'select' =>             array( 'required' => false , 'removeBackTick' => false , 'value' => "*" ) ,
+        'where' =>              array( 'required' => false , 'removeBackTick' => false , 'value' => "" ) ,
+        'groupBy' =>            array( 'required' => false , 'removeBackTick' => false , 'value' => "" ) ,
+        'orderBy' =>            array( 'required' => false , 'removeBackTick' => false , 'value' => "" ) ,
+        'limit' =>              array( 'required' => false , 'removeBackTick' => false , 'value' => "" ) ,
+        'TTL' =>                array( 'required' => false , 'removeBackTick' => false , 'value' => 3600 ) ,
+    );
+    private int $lastExecutionTime;
 
-    public function __construct(
-        string $sourceTable ,
-        string $destinationTable ,
-        string $select ,
-        string $where ,
-        string $groupBy ,
-        DBWrapper $db ,
-        int $TTL
-    ){
-        $this->sourceTable = $this->removeBacktick( $sourceTable );
-        $this->destinationTable = $this->removeBacktick( $destinationTable );
-        $this->select = $select;
-        $this->where = $where;
-        $this->groupBy = $groupBy;
-        $this->db = $db;
-        $this->TTL = $TTL;
+    public function __construct( array $parameters ){
+        foreach( $this->attributes as $attributeName => $attributeSettings ){
+            if( $attributeSettings["required"] && ! isset( $parameters[$attributeName] ) ) {
+                $this->throwError("Missing Required Parameter => {$attributeName}");
+            }
+            $value = $attributeSettings["value"];
+            if( isset( $parameters[$attributeName] ) ) {
+                if( is_string( $parameters[$attributeName] ) && $attributeSettings["removeBackTick"] ) {
+                    $parameters[$attributeName] = $this->removeBacktick( $parameters[$attributeName] );
+                }
+                if( isset( $parameters[$attributeName] ) && ! empty( $parameters[$attributeName] ) ) {
+                    $value = $parameters[$attributeName];
+                }
+            }
+            $this->$attributeName = $value;
+        }
     }
 
-    public function generateCacheTable( bool $force = false )  : void{
+    public function generateCacheTable( bool $force = false )  : void {
+        $start = time();
         $secondsFromGeneration = $this->getLastGenerationTS();
         if( $secondsFromGeneration < 0 || $secondsFromGeneration > $this->TTL || $force ){
 
@@ -38,11 +44,12 @@ class TableReduction{
             $this->db->query( $create );
 
             $temp = "{$this->destinationTable}_TEMP";
-            $neu = "$this->destinationTable";
+            $neu = $this->destinationTable;
             $old = "{$this->destinationTable}_old";
 
             $drop = "DROP TABLE IF EXISTS {$temp}";
             $this->db->query( $drop );
+
             $create = <<<EOD
 CREATE TABLE %s
 ENGINE=InnoDB DEFAULT CHARSET=utf8
@@ -54,6 +61,10 @@ FROM
 %s
 /* Group By */
 %s
+/* Order By */
+%s
+/* Limit */
+%s
 EOD;
             $sqlWhere = "";
             if( ! empty( $this->where ) ){
@@ -63,7 +74,23 @@ EOD;
             if( ! empty( $this->groupBy ) ){
                 $sqlGroupBy = " GROUP BY {$this->groupBy} ";
             }
-            $create = sprintf( $create , $temp , $this->select , $this->sourceTable , $sqlWhere , $sqlGroupBy );
+            $sqlOrderBy = "";
+            if( ! empty( $this->orderBy ) ){
+                $sqlOrderBy = " ORDER BY {$this->orderBy} ";
+            }
+            $sqlLimit = "";
+            if( ! empty( $this->limit ) ){
+                $sqlLimit = " LIMIT {$this->limit} ";
+            }
+            $create = sprintf( $create ,
+                $temp ,
+                $this->select ,
+                $this->sourceTable ,
+                $sqlWhere ,
+                $sqlGroupBy ,
+                $sqlOrderBy ,
+                $sqlLimit
+            );
             $this->db->query( $create );
 
             $rename = "RENAME TABLE $neu TO $old , $temp To $neu;";
@@ -72,6 +99,8 @@ EOD;
             $dropold = "DROP TABLE {$old}";
             $this->db->query( $dropold );
         }
+        $end = time();
+        $this->lastExecutionTime = $end - $start;
     }
 
     private function getLastGenerationTS() : int{
@@ -107,5 +136,13 @@ EOD;
 
     private function removeBacktick( string $word ) : string {
         return str_replace( '`' , '' , $word );
+    }
+
+    private function throwError( string $error ) : void {
+        throw new Exception( $error );
+    }
+
+    public function getLastExecutionTime() : string {
+        return $this->lastExecutionTime;
     }
 }
